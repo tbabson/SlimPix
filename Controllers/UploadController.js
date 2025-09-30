@@ -34,15 +34,55 @@ export const handleUpload = async (req, res) => {
         // compress and upload each file to GridFS
         for (const f of files) {
             const settings = qualitySettings[compressionLevel];
-            const compressed = await sharp(f.buffer)
-                .webp({
-                    quality: settings.quality,
-                    effort: settings.effort
-                })
-                .toBuffer();
 
-            const storedName = `${batchId}_${nanoid(6)}_${f.originalname.replace(/\s+/g, '_')}.webp`;
-            const gridFsId = await uploadBuffer(storedName, compressed, 'image/webp');
+            // Get the desired output format from request or use original format
+            const outputFormat = req.body.format || f.originalname.split('.').pop().toLowerCase();
+            const mimeType = f.mimetype;
+
+            // Initialize sharp with the input buffer
+            let sharpInstance = sharp(f.buffer);
+
+            // Apply format-specific compression
+            switch (outputFormat) {
+                case 'webp':
+                    sharpInstance = sharpInstance.webp({
+                        quality: settings.quality,
+                        effort: settings.effort
+                    });
+                    break;
+                case 'jpeg':
+                case 'jpg':
+                    sharpInstance = sharpInstance.jpeg({
+                        quality: settings.quality,
+                        mozjpeg: true // Use mozjpeg for better compression
+                    });
+                    break;
+                case 'png':
+                    sharpInstance = sharpInstance.png({
+                        quality: settings.quality,
+                        compressionLevel: Math.floor(settings.effort * 1.5) // PNG uses 0-9 compression level
+                    });
+                    break;
+                default:
+                    // Keep original format but still optimize
+                    if (mimeType.startsWith('image/')) {
+                        const format = mimeType.split('/')[1];
+                        if (format !== 'gif') { // Don't compress GIFs as they're already optimized
+                            sharpInstance = sharpInstance[format]({
+                                quality: settings.quality
+                            });
+                        }
+                    }
+            }
+
+            const compressed = await sharpInstance.toBuffer();
+            const extension = outputFormat === 'jpeg' ? 'jpg' : outputFormat;
+            const storedName = `${batchId}_${nanoid(6)}_${f.originalname.replace(/\s+/g, '_')}`;
+            const finalName = outputFormat === f.originalname.split('.').pop().toLowerCase()
+                ? storedName
+                : `${storedName}.${extension}`;
+
+            const gridFsId = await uploadBuffer(finalName, compressed, mimeType);
 
             fileEntries.push({
                 filename: f.originalname,
