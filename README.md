@@ -36,8 +36,6 @@ npm install
 3. Set up environment variables (create a .env file):
 
 ```env
-PORT=3000
-MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/<dbname>?retryWrites=true&w=majority  # See: https://www.mongodb.com/docs/manual/reference/connection-string/
 ZIP_EXPIRE_SECONDS=18000  # 5 hours
 UPLOAD_MAX_SIZE=5242880   # 5MB
 UPLOAD_MAX_FILES=10
