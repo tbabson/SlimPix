@@ -1,0 +1,30 @@
+{
+  "name": "image-compression",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "setup-project": "npm install && cd client && npm install && cd ../server && npm install",
+    "client": "cd client && npm run dev",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "mongodb": "^6.20.0",
+    "mongoose": "^8.18.2",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "nanoid": "^5.1.6",
+    "nodemon": "^3.1.10",
+    "path": "^0.12.7",
+    "sharp": "^0.34.4"
+  }
+}
