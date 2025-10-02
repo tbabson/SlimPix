@@ -3,12 +3,10 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
 
-// Basic middleware
 app.use(cors({
     origin: process.env.CORS_ORIGIN || '*',
     methods: ['GET', 'POST'],
@@ -18,7 +16,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Cached MongoDB connection for serverless
+// Cached MongoDB connection
 let cachedDb = null;
 
 const connectDB = async () => {
@@ -27,7 +25,7 @@ const connectDB = async () => {
     }
 
     if (!process.env.MONGODB_URL) {
-        throw new Error('MONGODB_URL environment variable is not defined');
+        throw new Error('MONGODB_URL is not defined');
     }
 
     try {
@@ -47,34 +45,30 @@ const connectDB = async () => {
     }
 };
 
-// Health check route (no DB required)
+// Health routes (no DB needed)
 app.get('/', (req, res) => {
     res.json({
         status: 'healthy',
-        message: 'Image Compression API running',
+        message: 'Image Compression API',
         version: '1.0.0',
-        environment: 'serverless'
+        routes: {
+            health: 'GET /api/health',
+            upload: 'POST /upload',
+            download: 'GET /upload/download/:batchId'
+        }
     });
 });
 
 app.get('/api/health', (req, res) => {
     res.json({
         status: 'ok',
-        message: 'Server is working',
-        env: {
-            hasMongoUrl: !!process.env.MONGODB_URL,
-            nodeEnv: process.env.NODE_ENV
-        }
+        mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        timestamp: new Date().toISOString()
     });
 });
 
-// DB connection middleware for other routes
-app.use(async (req, res, next) => {
-    // Skip DB for health check
-    if (req.path === '/' || req.path === '/api/health') {
-        return next();
-    }
-
+// DB middleware for /upload routes only
+app.use('/upload', async (req, res, next) => {
     try {
         await connectDB();
         next();
@@ -87,43 +81,44 @@ app.use(async (req, res, next) => {
     }
 });
 
-// Import routes dynamically with error handling
-let uploadRoutes;
+// Apply middleware
 try {
-    const routesModule = await import('../Routes/UploadRoutes.js');
-    uploadRoutes = routesModule.default;
-
-    // Apply rate limiter
-    try {
-        const { rateLimiter } = await import('../Middlewares/RateLimiter.js');
-        app.use(rateLimiter);
-    } catch (err) {
-        console.warn('Rate limiter not available:', err.message);
-    }
-
-    // Apply multer error handler
-    try {
-        const { multerErrorHandler } = await import('../Middlewares/MulterErrorHandler.js');
-        app.use(multerErrorHandler);
-    } catch (err) {
-        console.warn('Multer error handler not available:', err.message);
-    }
-
-    // Apply routes
-    app.use('/api/v1/upload', uploadRoutes);
-    console.log('Routes loaded successfully');
+    const { rateLimiter } = await import('../Middlewares/RateLimiter.js');
+    app.use('/upload', rateLimiter);
 } catch (err) {
-    console.error('Failed to load routes:', err);
-    // Routes will be unavailable but server will still respond to health checks
+    console.warn('Rate limiter not loaded:', err.message);
+}
+
+try {
+    const { multerErrorHandler } = await import('../Middlewares/MulterErrorHandler.js');
+    app.use(multerErrorHandler);
+} catch (err) {
+    console.warn('Multer error handler not loaded:', err.message);
+}
+
+// Mount routes
+try {
+    const uploadRoutes = (await import('../Routes/UploadRoutes.js')).default;
+    app.use('/upload', uploadRoutes);
+    console.log('✓ Routes loaded at /upload');
+} catch (err) {
+    console.error('✗ Routes failed to load:', err);
+
+    // Fallback error route
+    app.use('/upload', (req, res) => {
+        res.status(500).json({
+            error: 'Routes unavailable',
+            message: err.message,
+            hint: 'Check server logs'
+        });
+    });
 }
 
 // Error handler
 app.use((err, req, res, next) => {
     console.error('Error:', err);
     res.status(err.status || 500).json({
-        error: err.message || 'Internal server error',
-        status: err.status || 500,
-        ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
+        error: err.message || 'Internal server error'
     });
 });
 
@@ -135,5 +130,4 @@ app.use((req, res) => {
     });
 });
 
-// Export for Vercel serverless
 export default app;

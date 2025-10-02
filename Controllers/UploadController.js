@@ -1,24 +1,25 @@
+// Controllers/UploadController.js
 import { nanoid } from 'nanoid';
-import sharp from 'sharp';
-import archiver from 'archiver';
-import Batch from '../Models/Batch.js';
-import { uploadBuffer, openDownloadStreamById } from '../Services/GridfsService.js';
-
 
 export const handleUpload = async (req, res) => {
     try {
+        // Dynamic imports to reduce cold-start weight and avoid bundler/native binary issues at top-level
+        const sharp = (await import('sharp')).default;
+        const archiver = (await import('archiver')).default;
+        const { PassThrough } = await import('stream');
+        const Batch = (await import('../Models/Batch.js')).default;
+        const { uploadBuffer, openDownloadStreamById } = await import('../Services/GridfsService.js');
+
         const files = req.files || [];
         if (!files.length) return res.status(400).json({ error: 'No files uploaded' });
 
-        // Get compression quality from request or use default
-        const compressionLevel = req.body.quality || 'medium';
+        const compressionLevel = (req.body.quality || 'medium').toString().toLowerCase();
 
-        // Define quality settings for each level
         const qualitySettings = {
-            low: { quality: 40, effort: 1 },      // Fastest compression, lowest quality
-            medium: { quality: 60, effort: 3 },    // Balanced compression and speed
-            high: { quality: 80, effort: 5 },      // Higher quality, more compression effort
-            maximum: { quality: 95, effort: 6 }    // Best quality, maximum compression effort
+            low: { quality: 40, effort: 1 },
+            medium: { quality: 60, effort: 3 },
+            high: { quality: 80, effort: 5 },
+            maximum: { quality: 95, effort: 6 }
         };
 
         if (!qualitySettings[compressionLevel]) {
@@ -34,55 +35,56 @@ export const handleUpload = async (req, res) => {
         // compress and upload each file to GridFS
         for (const f of files) {
             const settings = qualitySettings[compressionLevel];
+            const originalExt = (f.originalname.split('.').pop() || '').toLowerCase();
+            const requestedFormat = (req.body.format || originalExt).toLowerCase();
 
-            // Get the desired output format from request or use original format
-            const outputFormat = req.body.format || f.originalname.split('.').pop().toLowerCase();
-            const mimeType = f.mimetype;
+            let sharpInstance = sharp(f.buffer, { failOnError: false });
 
-            // Initialize sharp with the input buffer
-            let sharpInstance = sharp(f.buffer);
+            // Configure encoder based on requestedFormat (fallback to original)
+            let outputExt = requestedFormat;
+            if (requestedFormat === 'jpg') outputExt = 'jpeg';
 
-            // Apply format-specific compression
-            switch (outputFormat) {
+            switch (outputExt) {
                 case 'webp':
-                    sharpInstance = sharpInstance.webp({
-                        quality: settings.quality,
-                        effort: settings.effort
-                    });
+                    sharpInstance = sharpInstance.webp({ quality: settings.quality, effort: settings.effort });
                     break;
                 case 'jpeg':
                 case 'jpg':
-                    sharpInstance = sharpInstance.jpeg({
-                        quality: settings.quality,
-                        mozjpeg: true // Use mozjpeg for better compression
-                    });
+                    sharpInstance = sharpInstance.jpeg({ quality: settings.quality, mozjpeg: true });
+                    outputExt = 'jpg';
                     break;
                 case 'png':
-                    sharpInstance = sharpInstance.png({
-                        quality: settings.quality,
-                        compressionLevel: Math.floor(settings.effort * 1.5) // PNG uses 0-9 compression level
-                    });
+                    // sharp.png doesn't accept 'quality' in same way as jpeg; we use compressionLevel instead
+                    sharpInstance = sharpInstance.png({ compressionLevel: Math.min(9, Math.max(0, Math.floor(settings.effort * 2))) });
                     break;
                 default:
-                    // Keep original format but still optimize
-                    if (mimeType.startsWith('image/')) {
-                        const format = mimeType.split('/')[1];
-                        if (format !== 'gif') { // Don't compress GIFs as they're already optimized
-                            sharpInstance = sharpInstance[format]({
-                                quality: settings.quality
-                            });
+                    // If unknown format, try to preserve original format where possible
+                    if (f.mimetype && f.mimetype.startsWith('image/')) {
+                        const fmt = f.mimetype.split('/')[1];
+                        if (fmt && fmt !== 'gif' && typeof sharpInstance[fmt] === 'function') {
+                            try {
+                                sharpInstance = sharpInstance[fmt]({ quality: settings.quality });
+                                outputExt = fmt === 'jpeg' ? 'jpg' : fmt;
+                            } catch (e) {
+                                // ignore and continue
+                            }
                         }
                     }
             }
 
             const compressed = await sharpInstance.toBuffer();
-            const extension = outputFormat === 'jpeg' ? 'jpg' : outputFormat;
-            const storedName = `${batchId}_${nanoid(6)}_${f.originalname.replace(/\s+/g, '_')}`;
-            const finalName = outputFormat === f.originalname.split('.').pop().toLowerCase()
-                ? storedName
-                : `${storedName}.${extension}`;
 
-            const gridFsId = await uploadBuffer(finalName, compressed, mimeType);
+            // Decide final file name and mime type for storage
+            const extension = outputExt === 'jpeg' ? 'jpg' : outputExt;
+            const storedNameBase = `${batchId}_${nanoid(6)}_${f.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '')}`;
+            const finalName = (originalExt === extension) ? storedNameBase : `${storedNameBase}.${extension}`;
+
+            let uploadMime = f.mimetype;
+            if (extension === 'webp') uploadMime = 'image/webp';
+            else if (extension === 'jpg' || extension === 'jpeg') uploadMime = 'image/jpeg';
+            else if (extension === 'png') uploadMime = 'image/png';
+
+            const gridFsId = await uploadBuffer(finalName, compressed, uploadMime);
 
             fileEntries.push({
                 filename: f.originalname,
@@ -94,28 +96,41 @@ export const handleUpload = async (req, res) => {
                     settings: qualitySettings[compressionLevel]
                 }
             });
+
             totalCompressed += compressed.length;
         }
 
-        // create zip from GridFS streams
+        // create zip from GridFS streams using a PassThrough collector
         const archive = archiver('zip', { zlib: { level: 6 } });
+        const pass = new PassThrough();
         const zipChunks = [];
-        archive.on('data', c => zipChunks.push(c));
+        pass.on('data', (c) => zipChunks.push(c));
+
+        // error handling
+        const finalizePromise = new Promise((resolve, reject) => {
+            pass.on('end', resolve);
+            pass.on('error', reject);
+            archive.on('error', reject);
+        });
+
+        archive.pipe(pass);
 
         for (const fe of fileEntries) {
             const stream = openDownloadStreamById(fe.gridFsId);
             archive.append(stream, { name: fe.filename.replace(/\s+/g, '_') });
         }
 
+        // finalize the archive and wait until the pass stream ends
         await archive.finalize();
-        // small wait to ensure data events emitted
-        await new Promise(r => setTimeout(r, 200));
+        await finalizePromise;
 
         const zipBuffer = Buffer.concat(zipChunks);
         const zipName = `${batchId}.zip`;
         const zipFileId = await uploadBuffer(zipName, zipBuffer, 'application/zip');
 
-        const batchDoc = await Batch.create({
+        // create DB record
+        const BatchModel = Batch; // alias for clarity
+        const batchDoc = await BatchModel.create({
             _id: batchId,
             originalCount: files.length,
             compressedCount: fileEntries.length,
@@ -126,55 +141,78 @@ export const handleUpload = async (req, res) => {
             compressionQuality: compressionLevel
         });
 
-        return res.json({ batchId: batchDoc._id, downloadUrl: `/download/${batchDoc._id}`, expiresAt: batchDoc.expiresAt });
+        // Build stable download URL:
+        const basePath = (req.baseUrl || '').replace(/\/$/, ''); // remove trailing slash
+        const downloadPath = `${basePath}/download/${batchDoc._id}`;
+
+        // Prefer BASE_URL env var when behind proxies/CDNs; otherwise derive from request
+        const origin = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
+
+        const fullUrl = `${origin}${downloadPath.startsWith('/') ? downloadPath : '/' + downloadPath}`;
+
+        // Return only the absolute download URL (no relativeDownloadUrl)
+        return res.json({
+            batchId: batchDoc._id,
+            downloadUrl: fullUrl,
+            expiresAt: batchDoc.expiresAt
+        });
     } catch (err) {
         console.error('upload error', err);
-        return res.status(500).json({ error: 'Upload processing failed', details: err.message });
+        return res.status(500).json({
+            error: 'Upload processing failed',
+            message: err.message,
+            stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined
+        });
     }
 };
 
 export const handleDownload = async (req, res) => {
     try {
+        const Batch = (await import('../Models/Batch.js')).default;
+        const { openDownloadStreamById } = await import('../Services/GridfsService.js');
+
         const { batchId } = req.params;
         const batch = await Batch.findById(batchId).lean();
-        if (!batch || !batch.zipFileId) return res.status(404).json({ error: 'Batch not found' });
+        if (!batch || !batch.zipFileId) {
+            return res.status(404).json({ error: 'Batch not found' });
+        }
 
-        if (new Date() > new Date(batch.expiresAt)) return res.status(410).json({ error: 'Expired' });
+        if (new Date() > new Date(batch.expiresAt)) {
+            return res.status(410).json({ error: 'Expired' });
+        }
 
         const stream = openDownloadStreamById(batch.zipFileId);
 
-        // Set appropriate headers for file download
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader('Content-Disposition', `attachment; filename="${batchId}.zip"`);
         res.setHeader('Cache-Control', 'no-cache');
 
-        // Handle stream events properly
         stream.on('error', (error) => {
             console.error('Stream error:', error);
             if (!res.headersSent) {
                 res.status(404).json({ error: 'File not found' });
             } else {
-                res.end();
+                try { res.end(); } catch (_) { /* ignore */ }
             }
         });
 
-        // Pipe the stream with error handling
         stream.pipe(res).on('error', (error) => {
             console.error('Pipe error:', error);
             if (!res.headersSent) {
                 res.status(500).json({ error: 'Download failed' });
             } else {
-                res.end();
+                try { res.end(); } catch (_) { /* ignore */ }
             }
-        }).on('finish', () => {
-            res.end();
         });
     } catch (err) {
         console.error('download error', err);
         if (!res.headersSent) {
-            res.status(500).json({ error: 'Failed to stream zip' });
+            res.status(500).json({
+                error: 'Failed to stream zip',
+                message: err.message
+            });
         } else {
-            res.end();
+            try { res.end(); } catch (_) { /* ignore */ }
         }
     }
 };
