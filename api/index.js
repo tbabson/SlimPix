@@ -1,10 +1,14 @@
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
 
-// Basic middleware (no external imports yet)
+// Basic middleware
 app.use(cors({
     origin: process.env.CORS_ORIGIN || '*',
     methods: ['GET', 'POST'],
@@ -14,24 +18,12 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Test route BEFORE importing anything else
-app.get('/api/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        message: 'Basic server is working',
-        env: {
-            hasMongoUrl: !!process.env.MONGODB_URL,
-            nodeEnv: process.env.NODE_ENV
-        }
-    });
-});
-
-// Cached MongoDB connection
-let isConnected = false;
+// Cached MongoDB connection for serverless
+let cachedDb = null;
 
 const connectDB = async () => {
-    if (isConnected && mongoose.connection.readyState === 1) {
-        return;
+    if (cachedDb && mongoose.connection.readyState === 1) {
+        return cachedDb;
     }
 
     if (!process.env.MONGODB_URL) {
@@ -39,57 +31,47 @@ const connectDB = async () => {
     }
 
     try {
-        await mongoose.connect(process.env.MONGODB_URL, {
+        const conn = await mongoose.connect(process.env.MONGODB_URL, {
             serverSelectionTimeoutMS: 5000,
             socketTimeoutMS: 45000,
+            maxPoolSize: 10,
+            minPoolSize: 2,
         });
 
-        isConnected = true;
+        cachedDb = conn;
         console.log('MongoDB connected');
+        return cachedDb;
     } catch (err) {
         console.error('MongoDB connection error:', err.message);
-        isConnected = false;
         throw err;
     }
 };
 
-// Try importing middleware with error handling
-let rateLimiter, multerErrorHandler, uploadRoutes;
+// Health check route (no DB required)
+app.get('/', (req, res) => {
+    res.json({
+        status: 'healthy',
+        message: 'Image Compression API running',
+        version: '1.0.0',
+        environment: 'serverless'
+    });
+});
 
-try {
-    const rateLimiterModule = await import('../Middlewares/rateLimiter.js');
-    rateLimiter = rateLimiterModule.rateLimiter;
-    console.log('✓ rateLimiter imported');
-} catch (err) {
-    console.error('✗ Failed to import rateLimiter:', err.message);
-    rateLimiter = (req, res, next) => next(); // Bypass if import fails
-}
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        message: 'Server is working',
+        env: {
+            hasMongoUrl: !!process.env.MONGODB_URL,
+            nodeEnv: process.env.NODE_ENV
+        }
+    });
+});
 
-try {
-    const multerModule = await import('../Middlewares/MulterErrorHandler.js');
-    multerErrorHandler = multerModule.multerErrorHandler;
-    console.log('✓ multerErrorHandler imported');
-} catch (err) {
-    console.error('✗ Failed to import multerErrorHandler:', err.message);
-    multerErrorHandler = (req, res, next) => next();
-}
-
-try {
-    const routesModule = await import('../Routes/UploadRoutes.js');
-    uploadRoutes = routesModule.default;
-    console.log('✓ uploadRoutes imported');
-} catch (err) {
-    console.error('✗ Failed to import uploadRoutes:', err.message);
-}
-
-// Apply middleware
-app.use(rateLimiter);
-app.use(multerErrorHandler);
-
-// DB connection middleware
+// DB connection middleware for other routes
 app.use(async (req, res, next) => {
     // Skip DB for health check
-    if (req.path === '/api/health' || req.path === '/') {
+    if (req.path === '/' || req.path === '/api/health') {
         return next();
     }
 
@@ -97,6 +79,7 @@ app.use(async (req, res, next) => {
         await connectDB();
         next();
     } catch (err) {
+        console.error('DB connection failed:', err);
         res.status(500).json({
             error: 'Database connection failed',
             message: err.message
@@ -104,23 +87,35 @@ app.use(async (req, res, next) => {
     }
 });
 
-// Routes
-if (uploadRoutes) {
-    app.use('/api/v1/upload', uploadRoutes);
-}
+// Import routes dynamically with error handling
+let uploadRoutes;
+try {
+    const routesModule = await import('../Routes/UploadRoutes.js');
+    uploadRoutes = routesModule.default;
 
-// Health check
-app.get('/', (req, res) => res.json({
-    status: 'healthy',
-    message: 'Image Compression API running',
-    version: '1.0.0',
-    environment: 'serverless',
-    importsSuccess: {
-        rateLimiter: !!rateLimiter,
-        multerErrorHandler: !!multerErrorHandler,
-        uploadRoutes: !!uploadRoutes
+    // Apply rate limiter
+    try {
+        const { rateLimiter } = await import('../Middlewares/rateLimiter.js');
+        app.use(rateLimiter);
+    } catch (err) {
+        console.warn('Rate limiter not available:', err.message);
     }
-}));
+
+    // Apply multer error handler
+    try {
+        const { multerErrorHandler } = await import('../Middlewares/MulterErrorHandler.js');
+        app.use(multerErrorHandler);
+    } catch (err) {
+        console.warn('Multer error handler not available:', err.message);
+    }
+
+    // Apply routes
+    app.use('/api/v1/upload', uploadRoutes);
+    console.log('Routes loaded successfully');
+} catch (err) {
+    console.error('Failed to load routes:', err);
+    // Routes will be unavailable but server will still respond to health checks
+}
 
 // Error handler
 app.use((err, req, res, next) => {
@@ -128,7 +123,7 @@ app.use((err, req, res, next) => {
     res.status(err.status || 500).json({
         error: err.message || 'Internal server error',
         status: err.status || 500,
-        stack: process.env.NODE_ENV === 'production' ? undefined : err.stack
+        ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
     });
 });
 
@@ -140,4 +135,5 @@ app.use((req, res) => {
     });
 });
 
+// Export for Vercel serverless
 export default app;
