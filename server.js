@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import mongoose from 'mongoose';
-import { rateLimiter } from './Middlewares/rateLimiter.js';
+import { rateLimiter } from './Middlewares/RateLimiter.js';
 import { multerErrorHandler } from './Middlewares/MulterErrorHandler.js';
 import dotenv from 'dotenv';
 

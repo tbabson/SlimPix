@@ -95,7 +95,7 @@ try {
 
     // Apply rate limiter
     try {
-        const { rateLimiter } = await import('../Middlewares/rateLimiter.js');
+        const { rateLimiter } = await import('../Middlewares/RateLimiter.js');
         app.use(rateLimiter);
     } catch (err) {
         console.warn('Rate limiter not available:', err.message);
