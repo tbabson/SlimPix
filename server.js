@@ -72,7 +72,7 @@ app.use((req, res) => {
     res.status(404).json({ error: 'Route not found' });
 });
 
-const PORT = process.env.PORT || 4000;
+const port = process.env.PORT || 4000;
 
 
 // MongoDB connection with retry logic
@@ -105,8 +105,8 @@ const startServer = async () => {
 
         // In production (serverless), we don't need to listen
         if (process.env.NODE_ENV !== 'production') {
-            app.listen(PORT, () => {
-                console.log(`Server running on port ${PORT}...`);
+            app.listen(port, () => {
+                console.log(`Server running on port ${port}...`);
             });
         }
     } catch (err) {
