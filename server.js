@@ -74,51 +74,61 @@ app.use((req, res) => {
 
 const port = process.env.PORT || 4000;
 
+try {
+    await mongoose.connect(process.env.MONGODB_URL);
+    app.listen(port, '0.0.0.0', () => {
+        console.log(`server running on PORT ${port}...`);
+
+    });
+} catch (error) {
+    console.log(error);
+    process.exit(1);
+}
 
 // MongoDB connection with retry logic
-const connectDB = async (retries = 5) => {
-    try {
-        await mongoose.connect(process.env.MONGODB_URL, {
-            serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000,
-            maxPoolSize: 10,
-            minPoolSize: 2,
-            heartbeatFrequencyMS: 10000
-        });
-        console.log('MongoDB connected successfully');
-        return true;
-    } catch (err) {
-        if (retries > 0) {
-            console.log(`MongoDB connection failed. Retrying... (${retries} attempts left)`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            return connectDB(retries - 1);
-        }
-        console.error('MongoDB connection failed after all retries:', err);
-        throw err;
-    }
-};
+// const connectDB = async (retries = 5) => {
+//     try {
+//         await mongoose.connect(process.env.MONGODB_URL, {
+//             serverSelectionTimeoutMS: 5000,
+//             socketTimeoutMS: 45000,
+//             maxPoolSize: 10,
+//             minPoolSize: 2,
+//             heartbeatFrequencyMS: 10000
+//         });
+//         console.log('MongoDB connected successfully');
+//         return true;
+//     } catch (err) {
+//         if (retries > 0) {
+//             console.log(`MongoDB connection failed. Retrying... (${retries} attempts left)`);
+//             await new Promise(resolve => setTimeout(resolve, 5000));
+//             return connectDB(retries - 1);
+//         }
+//         console.error('MongoDB connection failed after all retries:', err);
+//         throw err;
+//     }
+// };
 
 // Start server function
-const startServer = async () => {
-    try {
-        await connectDB();
+// const startServer = async () => {
+//     try {
+//         await connectDB();
 
-        // In production (serverless), we don't need to listen
-        if (process.env.NODE_ENV !== 'production') {
-            app.listen(port, () => {
-                console.log(`Server running on port ${port}...`);
-            });
-        }
-    } catch (err) {
-        console.error('Server startup failed:', err);
-        process.exit(1);
-    }
-};
+//         // In production (serverless), we don't need to listen
+//         if (process.env.NODE_ENV !== 'production') {
+//             app.listen(port, () => {
+//                 console.log(`Server running on port ${port}...`);
+//             });
+//         }
+//     } catch (err) {
+//         console.error('Server startup failed:', err);
+//         process.exit(1);
+//     }
+// };
 
 // Initialize server
-startServer();
+// startServer();
 
 // Export for serverless use
-export default app;
+// export default app;
 
 
