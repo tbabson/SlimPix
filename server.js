@@ -5,6 +5,9 @@ import mongoose from 'mongoose';
 import { rateLimiter } from './Middlewares/RateLimiter.js';
 import { multerErrorHandler } from './Middlewares/MulterErrorHandler.js';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
+import xss from 'xss-clean';
+import mongoSanitize from 'express-mongo-sanitize';
 
 // Load environment variables
 dotenv.config();
@@ -23,6 +26,11 @@ app.use(cors({
 if (process.env.NODE_ENV !== 'production') {
     app.use(morgan('dev'));
 }
+
+// Security middleware
+app.use(helmet());
+app.use(xss());
+app.use(mongoSanitize());
 
 // Body parser middleware
 app.use(express.json({ limit: '50mb' }));
