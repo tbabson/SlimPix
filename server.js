@@ -29,15 +29,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Security middleware
-app.use(helmet({
-    contentSecurityPolicy: {
-        directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: ["'self'"], // can't easily include per-request nonce here
-            // ...
-        }
-    }
-}));
+app.use(helmet());
 app.use(makeReqMutable); // --- add this BEFORE app.use(xss());
 app.use(xss());
 app.use(mongoSanitize());
