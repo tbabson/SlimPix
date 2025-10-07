@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import helmet from 'helmet';
 import xss from 'xss-clean';
 import mongoSanitize from 'express-mongo-sanitize';
+import makeReqMutable from './Middlewares/makeReqMutable.js';
 
 // Load environment variables
 dotenv.config();
@@ -29,6 +30,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Security middleware
 app.use(helmet());
+app.use(makeReqMutable); // --- add this BEFORE app.use(xss());
 app.use(xss());
 app.use(mongoSanitize());
 
