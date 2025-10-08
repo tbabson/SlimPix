@@ -76,8 +76,13 @@ export const handleUpload = async (req, res) => {
 
             // Decide final file name and mime type for storage
             const extension = outputExt === 'jpeg' ? 'jpg' : outputExt;
-            const storedNameBase = `${batchId}_${nanoid(6)}_${f.originalname.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '')}`;
-            const finalName = (originalExt === extension) ? storedNameBase : `${storedNameBase}.${extension}`;
+
+            // Remove the original extension from the filename
+            const baseNameWithoutExt = f.originalname.replace(/\.[^/.]+$/, '');
+            const sanitizedBaseName = baseNameWithoutExt.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+
+            // Build final filename with new extension
+            const finalName = `${batchId}_${nanoid(6)}_${sanitizedBaseName}.${extension}`;
 
             let uploadMime = f.mimetype;
             if (extension === 'webp') uploadMime = 'image/webp';
@@ -87,7 +92,7 @@ export const handleUpload = async (req, res) => {
             const gridFsId = await uploadBuffer(finalName, compressed, uploadMime);
 
             fileEntries.push({
-                filename: f.originalname,
+                filename: `${baseNameWithoutExt}.${extension}`, // Return with new extension
                 gridFsId,
                 originalSize: f.size,
                 compressedSize: compressed.length,
