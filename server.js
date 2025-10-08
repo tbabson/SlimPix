@@ -62,6 +62,9 @@ app.get('/', (req, res) => res.json({
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+    req.setTimeout(300000); // 5 minutes
+    res.setTimeout(300000);
+    next();
     console.error(err.stack);
     res.status(err.status || 500).json({
         error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
