@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid';
 
 export const handleUpload = async (req, res) => {
     try {
-        // Dynamic imports to reduce cold-start weight and avoid bundler/native binary issues at top-level
+        // Dynamic imports
         const sharp = (await import('sharp')).default;
         const archiver = (await import('archiver')).default;
         const { PassThrough } = await import('stream');
@@ -29,18 +29,15 @@ export const handleUpload = async (req, res) => {
         const batchId = `batch_${nanoid(10)}`;
         const expiresAt = new Date(Date.now() + parseInt(process.env.ZIP_EXPIRE_SECONDS || '18000', 10) * 1000);
 
-        const fileEntries = [];
-        let totalCompressed = 0;
+        const settings = qualitySettings[compressionLevel];
 
-        // compress and upload each file to GridFS
-        for (const f of files) {
-            const settings = qualitySettings[compressionLevel];
+        // Process all files in parallel instead of sequentially
+        const compressionPromises = files.map(async (f) => {
             const originalExt = (f.originalname.split('.').pop() || '').toLowerCase();
             const requestedFormat = (req.body.format || originalExt).toLowerCase();
 
             let sharpInstance = sharp(f.buffer, { failOnError: false });
 
-            // Configure encoder based on requestedFormat (fallback to original)
             let outputExt = requestedFormat;
             if (requestedFormat === 'jpg') outputExt = 'jpeg';
 
@@ -54,11 +51,9 @@ export const handleUpload = async (req, res) => {
                     outputExt = 'jpg';
                     break;
                 case 'png':
-                    // sharp.png doesn't accept 'quality' in same way as jpeg; we use compressionLevel instead
                     sharpInstance = sharpInstance.png({ compressionLevel: Math.min(9, Math.max(0, Math.floor(settings.effort * 2))) });
                     break;
                 default:
-                    // If unknown format, try to preserve original format where possible
                     if (f.mimetype && f.mimetype.startsWith('image/')) {
                         const fmt = f.mimetype.split('/')[1];
                         if (fmt && fmt !== 'gif' && typeof sharpInstance[fmt] === 'function') {
@@ -74,14 +69,9 @@ export const handleUpload = async (req, res) => {
 
             const compressed = await sharpInstance.toBuffer();
 
-            // Decide final file name and mime type for storage
             const extension = outputExt === 'jpeg' ? 'jpg' : outputExt;
-
-            // Remove the original extension from the filename
             const baseNameWithoutExt = f.originalname.replace(/\.[^/.]+$/, '');
             const sanitizedBaseName = baseNameWithoutExt.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-
-            // Build final filename with new extension
             const finalName = `${batchId}_${nanoid(6)}_${sanitizedBaseName}.${extension}`;
 
             let uploadMime = f.mimetype;
@@ -91,8 +81,8 @@ export const handleUpload = async (req, res) => {
 
             const gridFsId = await uploadBuffer(finalName, compressed, uploadMime);
 
-            fileEntries.push({
-                filename: `${baseNameWithoutExt}.${extension}`, // Return with new extension
+            return {
+                filename: `${baseNameWithoutExt}.${extension}`,
                 gridFsId,
                 originalSize: f.size,
                 compressedSize: compressed.length,
@@ -100,18 +90,19 @@ export const handleUpload = async (req, res) => {
                     level: compressionLevel,
                     settings: qualitySettings[compressionLevel]
                 }
-            });
+            };
+        });
 
-            totalCompressed += compressed.length;
-        }
+        // Wait for all compressions to complete
+        const fileEntries = await Promise.all(compressionPromises);
+        const totalCompressed = fileEntries.reduce((sum, fe) => sum + fe.compressedSize, 0);
 
-        // create zip from GridFS streams using a PassThrough collector
+        // Create zip from GridFS streams
         const archive = archiver('zip', { zlib: { level: 6 } });
         const pass = new PassThrough();
         const zipChunks = [];
         pass.on('data', (c) => zipChunks.push(c));
 
-        // error handling
         const finalizePromise = new Promise((resolve, reject) => {
             pass.on('end', resolve);
             pass.on('error', reject);
@@ -125,7 +116,6 @@ export const handleUpload = async (req, res) => {
             archive.append(stream, { name: fe.filename.replace(/\s+/g, '_') });
         }
 
-        // finalize the archive and wait until the pass stream ends
         await archive.finalize();
         await finalizePromise;
 
@@ -133,9 +123,7 @@ export const handleUpload = async (req, res) => {
         const zipName = `${batchId}.zip`;
         const zipFileId = await uploadBuffer(zipName, zipBuffer, 'application/zip');
 
-        // create DB record
-        const BatchModel = Batch; // alias for clarity
-        const batchDoc = await BatchModel.create({
+        const batchDoc = await Batch.create({
             _id: batchId,
             originalCount: files.length,
             compressedCount: fileEntries.length,
@@ -146,16 +134,11 @@ export const handleUpload = async (req, res) => {
             compressionQuality: compressionLevel
         });
 
-        // Build stable download URL:
-        const basePath = (req.baseUrl || '').replace(/\/$/, ''); // remove trailing slash
+        const basePath = (req.baseUrl || '').replace(/\/$/, '');
         const downloadPath = `${basePath}/download/${batchDoc._id}`;
-
-        // Prefer BASE_URL env var when behind proxies/CDNs; otherwise derive from request
         const origin = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
-
         const fullUrl = `${origin}${downloadPath.startsWith('/') ? downloadPath : '/' + downloadPath}`;
 
-        // Return only the absolute download URL (no relativeDownloadUrl)
         return res.json({
             batchId: batchDoc._id,
             downloadUrl: fullUrl,
