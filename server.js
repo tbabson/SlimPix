@@ -134,6 +134,6 @@ try {
 // startServer();
 
 // Export for serverless use
-// export default app;
+export default app;
 
 
