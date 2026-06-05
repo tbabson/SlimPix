@@ -1,141 +1,146 @@
-# SlimPix - Image Compression API
+# Image Compression API
 
-SlimPix is a powerful image compression API that converts images to WebP format with customizable compression levels. It provides batch processing capabilities and returns a convenient ZIP file containing all compressed images.
+A server-side API for batch image compression with format conversion, GridFS storage, and ZIP archive delivery.
 
 ## Features
 
-- **Multiple Compression Levels**: Choose from four quality presets:
+- Batch image upload and parallel compression
+- Four quality presets: `low`, `medium`, `high`, `maximum`
+- Output format support: `webp`, `jpeg`, `png`, or preserve original format
+- ZIP archive generation for bulk download
+- MongoDB GridFS storage for compressed assets and ZIP files
+- Built-in security middleware: Helmet, XSS protection, MongoDB sanitization, and rate limiting
+- Health and test endpoints for quick validation
+- Vercel-compatible serverless build
 
-  - Low (40% quality) - Maximum compression, smallest file size
-  - Medium (60% quality) - Balanced compression and quality
-  - High (80% quality) - Better visual quality
-  - Maximum (95% quality) - Near-lossless quality
+## Technologies
 
-- **Batch Processing**: Upload multiple images at once
-- **Flexible Format Support**: Maintains original image format or converts to specified format (JPEG, PNG, WebP)
-- **Smart Compression**: Format-specific optimization for each image type
-- **ZIP Archive**: Receives compressed images in a single ZIP file
-- **Auto-Cleanup**: Automatically removes processed files after 5 hours (configurable)
-- **GridFS Storage**: Efficiently handles large files using MongoDB GridFS
+- Node.js / Express 5
+- Sharp
+- MongoDB / Mongoose / GridFS
+- Multer
+- Archiver
+- Helmet, xss-clean, express-mongo-sanitize
 
-## Setup
+## Getting Started
 
-1. Clone the repository:
-
-```bash
-git clone https://github.com/your-username/your-repo-name.git  # Replace with your actual repository URL
-cd SlimPix
-```
-
-2. Install dependencies:
+### 1. Clone and install
 
 ```bash
+git clone <repo-url>
+cd image-compression
 npm install
 ```
 
-3. Set up environment variables (create a .env file):
-
-```env
-ZIP_EXPIRE_SECONDS=18000  # 5 hours
-UPLOAD_MAX_SIZE=5242880   # 5MB
-UPLOAD_MAX_FILES=10
-```
-
-4. Start the server:
+### 3. Start the server
 
 ```bash
 npm start
 ```
 
+For automatic reload during development:
+
+```bash
+npm run dev
+```
+
 ## API Endpoints
 
-### Upload Images
+### Health check
 
-- **URL**: `/upload`
+- **URL**: `/`
+- **Method**: `GET`
+- **Response**: `{ status, message, version }`
+
+### Upload images
+
+- **URL**: `/api/v1/upload`
 - **Method**: `POST`
 - **Content-Type**: `multipart/form-data`
-- **Parameters**:
-  - `files`: Array of image files (required)
-  - `quality`: Compression quality level (optional)
-    - Values: 'low', 'medium', 'high', 'maximum'
-    - Default: 'medium'
-  - `format`: Output format (optional)
-    - Values: 'webp', 'jpeg', 'png', or omit to keep original format
-    - Default: keeps original format
+- **Form fields**:
+  - `files` (required): one or more image files
+  - `quality` (optional): `low`, `medium`, `high`, `maximum` — default: `medium`
+  - `format` (optional): `webp`, `jpeg`, `png` — omit to preserve original format
 
-#### Example Request:
+#### Example request
 
-```javascript
+```js
 const formData = new FormData();
 files.forEach((file) => formData.append("files", file));
 formData.append("quality", "high");
+formData.append("format", "webp");
 
-fetch("/upload", {
+fetch("http://localhost:4000/api/v1/upload", {
   method: "POST",
   body: formData,
-});
+})
+  .then((res) => res.json())
+  .then(console.log);
 ```
 
-#### Success Response:
+#### Successful response
 
 ```json
 {
   "batchId": "batch_xY1zA2bC3d",
-  "downloadUrl": "/download/batch_xY1zA2bC3d",
-  "expiresAt": "2025-09-30T12:00:00.000Z"
+  "downloadUrl": "http://localhost:4000/api/v1/upload/download/batch_xY1zA2bC3d",
+  "expiresAt": "2026-05-22T15:00:00.000Z"
 }
 ```
 
-### Download Compressed Images
+### Download compressed images
 
-- **URL**: `/download/:batchId`
+- **URL**: `/api/v1/upload/download/:batchId`
 - **Method**: `GET`
-- **Response**: ZIP file containing compressed images
+- **Response**: `application/zip`
 
-## Compression Settings
+### Upload route test
 
-| Quality Level | WebP Quality | Processing Effort | Use Case               |
-| ------------- | ------------ | ----------------- | ---------------------- |
-| Low           | 40%          | 1 (Fastest)       | Thumbnails, previews   |
-| Medium        | 60%          | 3 (Balanced)      | General web images     |
-| High          | 80%          | 5 (High)          | Important visuals      |
-| Maximum       | 95%          | 6 (Maximum)       | Critical quality needs |
+- **URL**: `/api/v1/upload/test`
+- **Method**: `GET`
+- **Response**: `{ status, message, timestamp }`
 
-## Technical Details
+## Compression quality presets
 
-- **Image Processing**: Uses Sharp.js for efficient WebP conversion
-- **File Storage**: MongoDB GridFS for scalable file storage
-- **Archiving**: Uses Archiver for ZIP file creation
-- **ID Generation**: Nano ID for unique batch identification
-- **Error Handling**: Comprehensive error handling and status codes
+| Level   | WebP Quality | Effort | Description                       |
+| ------- | ------------ | ------ | --------------------------------- |
+| low     | 40           | 1      | Maximum compression, smaller size |
+| medium  | 60           | 3      | Balanced quality and size         |
+| high    | 80           | 5      | Better visual quality             |
+| maximum | 95           | 6      | Near-lossless output              |
 
-## Limitations
+## Error responses
 
-- Maximum file size: 5MB per file (configurable)
-- Maximum files per batch: 10 (configurable)
-- File expiry: 5 hours after upload (configurable)
-- Supported input/output formats: JPEG, PNG, WebP, TIFF, and any format supported by Sharp.js
-- Format conversion: Optional, maintains original format by default
+| Status | Meaning                              |
+| ------ | ------------------------------------ |
+| 400    | No files uploaded or invalid quality |
+| 404    | Batch or file not found              |
+| 410    | Batch has expired                    |
+| 500    | Upload processing or download failed |
 
-## Error Responses
+## Environment variables
 
-- `400 Bad Request`: No files uploaded or invalid quality level
-- `404 Not Found`: Batch not found
-- `410 Gone`: Batch has expired
-- `500 Internal Server Error`: Processing failed
+| Variable             | Default   | Description                              |
+| -------------------- | --------- | ---------------------------------------- |
+| `PORT`               | `4000`    | Server port                              |
+| `NODE_ENV`           | —         | `development` or `production`            |
+| `CORS_ORIGIN`        | `*`       | Allowed CORS origin                      |
+| `MONGODB_URL`        | —         | MongoDB connection string                |
+| `BASE_URL`           | —         | Base public URL for download links       |
+| `ZIP_EXPIRE_SECONDS` | `18000`   | ZIP expiry in seconds (default 5 hours)  |
+| `UPLOAD_MAX_SIZE`    | `5242880` | Max upload size per file in bytes (5 MB) |
+| `UPLOAD_MAX_FILES`   | `10`      | Max number of files per upload           |
+
+## Deployment (Vercel)
+
+The `vercel-build` script installs `sharp` for Linux:
+
+```bash
+npm install --platform=linux --arch=x64 sharp
+```
+
+The cleanup worker is disabled in production; expired batch deletion does not run in serverless environments.
 
 ## License
 
-[MIT License](LICENSE)
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Support
-
-For support, please open an issue in the GitHub repository.
+ISC
