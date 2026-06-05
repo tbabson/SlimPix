@@ -118,19 +118,6 @@ fetch("http://localhost:4000/api/v1/upload", {
 | 410    | Batch has expired                    |
 | 500    | Upload processing or download failed |
 
-## Environment variables
-
-| Variable             | Default   | Description                              |
-| -------------------- | --------- | ---------------------------------------- |
-| `PORT`               | `4000`    | Server port                              |
-| `NODE_ENV`           | —         | `development` or `production`            |
-| `CORS_ORIGIN`        | `*`       | Allowed CORS origin                      |
-| `MONGODB_URL`        | —         | MongoDB connection string                |
-| `BASE_URL`           | —         | Base public URL for download links       |
-| `ZIP_EXPIRE_SECONDS` | `18000`   | ZIP expiry in seconds (default 5 hours)  |
-| `UPLOAD_MAX_SIZE`    | `5242880` | Max upload size per file in bytes (5 MB) |
-| `UPLOAD_MAX_FILES`   | `10`      | Max number of files per upload           |
-
 ## Deployment (Vercel)
 
 The `vercel-build` script installs `sharp` for Linux:
